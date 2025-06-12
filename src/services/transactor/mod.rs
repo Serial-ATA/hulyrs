@@ -14,41 +14,73 @@
 //
 
 use crate::Result;
-use crate::services::ForceHttpScheme;
-use crate::services::types::WorkspaceUuid;
-use reqwest_middleware::ClientWithMiddleware;
+use crate::services::ForceScheme;
+use crate::services::core::WorkspaceUuid;
+use crate::services::transactor::backend::Backend;
+use crate::services::transactor::backend::http::{HttpBackend, HttpClient};
+use crate::services::transactor::backend::ws::WsBackend;
+use crate::services::transactor::methods::Method;
+use reqwest_websocket::{Message, RequestBuilderExt, WebSocket};
 use secrecy::{ExposeSecret, SecretString};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use url::Url;
 
+pub mod backend;
 pub mod document;
 pub mod event;
+pub mod methods;
 pub mod person;
 
-pub type HttpClient = ClientWithMiddleware;
-
-#[derive(Clone)]
-pub struct TransactorClient {
-    pub workspace: WorkspaceUuid,
-    pub base: Url,
-    token: SecretString,
-    http: HttpClient,
+pub struct TransactorRequest {
+    pub method: String,
+    pub params: Vec<(String, String)>,
 }
 
-impl PartialEq for TransactorClient {
+#[derive(Clone)]
+pub struct TransactorClient<B> {
+    pub workspace: WorkspaceUuid,
+    token: SecretString,
+    backend: B,
+}
+
+impl<B: Backend> PartialEq for TransactorClient<B> {
     fn eq(&self, other: &Self) -> bool {
         self.workspace == other.workspace
             && self.token.expose_secret() == other.token.expose_secret()
-            && self.base == other.base
+            && self.base() == other.base()
     }
 }
 
-impl super::TokenProvider for &TransactorClient {
+impl<B> super::TokenProvider for &TransactorClient<B> {
     fn provide_token(&self) -> Option<&str> {
         Some(self.token.expose_secret())
     }
 }
 
-impl TransactorClient {
+impl<B: Backend> TransactorClient<B> {
+    pub fn base(&self) -> &Url {
+        self.backend.base()
+    }
+
+    pub async fn get<T: DeserializeOwned + Send>(
+        &mut self,
+        method: Method,
+        params: impl IntoIterator<Item = (&str, &str)>,
+    ) -> Result<T> {
+        self.backend.get(method, params).await
+    }
+
+    pub async fn post<T: DeserializeOwned + Send, Q: Serialize>(
+        &mut self,
+        method: Method,
+        body: &Q,
+    ) -> Result<T> {
+        self.backend.post(method, body).await
+    }
+}
+
+impl TransactorClient<HttpBackend> {
     pub fn new(
         http: HttpClient,
         base: Url,
@@ -56,11 +88,29 @@ impl TransactorClient {
         token: impl Into<SecretString>,
     ) -> Result<Self> {
         let base = base.force_http_scheme();
+        let token = token.into();
         Ok(Self {
             workspace,
-            http,
-            base,
-            token: token.into(),
+            token: token.clone(),
+            backend: HttpBackend { base, client: http, token },
+        })
+    }
+}
+
+impl TransactorClient<WsBackend> {
+    pub async fn new_ws(
+        base: Url,
+        workspace: WorkspaceUuid,
+        token: impl Into<SecretString>,
+    ) -> Result<Self> {
+        let base = base.force_ws_scheme();
+        let token = token.into();
+        let backend = WsBackend::connect(base, token.expose_secret()).await?;
+
+        Ok(Self {
+            workspace,
+            token,
+            backend,
         })
     }
 }

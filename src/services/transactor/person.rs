@@ -20,6 +20,8 @@ use crate::{
     Result,
     services::{HttpClient, JsonClient, core::SocialIdType},
 };
+use crate::services::transactor::backend::Backend;
+use crate::services::transactor::methods::Method;
 
 #[derive(Serialize, Debug, derive_builder::Builder)]
 #[serde(rename_all = "camelCase")]
@@ -43,16 +45,13 @@ pub struct EnsurePersonResponse {
 
 pub trait EnsurePerson {
     fn ensure_person(
-        &self,
+        &mut self,
         request: &EnsurePersonRequest,
     ) -> impl Future<Output = Result<EnsurePersonResponse>>;
 }
 
-impl EnsurePerson for super::TransactorClient {
-    async fn ensure_person(&self, request: &EnsurePersonRequest) -> Result<EnsurePersonResponse> {
-        let path = format!("/api/v1/ensure-person/{}", self.workspace);
-        let url = self.base.join(&path)?;
-
-        <HttpClient as JsonClient>::post(&self.http, self, url, request).await
+impl<B: Backend> EnsurePerson for super::TransactorClient<B> {
+    async fn ensure_person(&mut self, request: &EnsurePersonRequest) -> Result<EnsurePersonResponse> {
+        self.post(Method::EnsurePerson, request).await
     }
 }

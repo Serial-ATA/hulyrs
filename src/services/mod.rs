@@ -20,7 +20,7 @@ pub mod jwt;
 pub mod kvs;
 pub mod services;
 pub mod transactor;
-pub mod types;
+mod rpc;
 
 pub use services::*;
 

@@ -49,11 +49,12 @@ pub trait BasePathProvider {
     fn provide_base_path(&self) -> &Url;
 }
 
-pub trait ForceHttpScheme {
+pub trait ForceScheme {
     fn force_http_scheme(self) -> Url;
+    fn force_ws_scheme(self) -> Url;
 }
 
-impl ForceHttpScheme for Url {
+impl ForceScheme for Url {
     fn force_http_scheme(mut self) -> Url {
         match self.scheme() {
             "ws" => {
@@ -63,6 +64,24 @@ impl ForceHttpScheme for Url {
             "wss" => {
                 self.set_scheme("https").unwrap();
             }
+
+            _ => panic!(),
+        };
+
+        self
+    }
+
+    fn force_ws_scheme(mut self) -> Url {
+        match self.scheme() {
+            "http" => {
+                self.set_scheme("ws").unwrap();
+            }
+
+            "https" => {
+                self.set_scheme("wss").unwrap();
+            }
+
+            "ws" | "wss" => {},
 
             _ => panic!(),
         };
@@ -165,7 +184,7 @@ impl JsonClient for HttpClient {
     }
 }
 
-#[derive(Deserialize, Debug, Clone, strum::Display)]
+#[derive(Serialize, Deserialize, Debug, Clone, strum::Display)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Severity {
     Ok,
@@ -174,7 +193,7 @@ pub enum Severity {
     Error,
 }
 
-#[derive(Deserialize, Debug, Clone, thiserror::Error)]
+#[derive(Serialize, Deserialize, Debug, Clone, thiserror::Error)]
 pub struct Status {
     pub severity: Severity,
     pub code: String,
@@ -430,7 +449,7 @@ impl ServiceFactory {
         )
     }
 
-    pub fn new_transactor_client(&self, base: Url, claims: &Claims) -> Result<TransactorClient> {
+    pub fn new_transactor_client(&self, base: Url, claims: &Claims) -> Result<TransactorClient<HttpBackend>> {
         TransactorClient::new(
             self.transactor_http.clone(),
             base,
@@ -444,13 +463,40 @@ impl ServiceFactory {
         )
     }
 
+    pub async fn new_transactor_client_ws(
+        &self,
+        base: Url,
+        claims: &Claims,
+    ) -> Result<TransactorClient<WsBackend>> {
+        TransactorClient::new_ws(
+            base,
+            claims.workspace()?,
+            claims.encode(
+                self.config
+                    .token_secret
+                    .as_ref()
+                    .ok_or(Error::Other("NoSecret"))?,
+            )?,
+        )
+        .await
+    }
+
     pub fn new_transactor_client_from_token(
         &self,
         base: Url,
         workspace: WorkspaceUuid,
         token: impl Into<SecretString>,
-    ) -> Result<TransactorClient> {
+    ) -> Result<TransactorClient<HttpBackend>> {
         TransactorClient::new(self.transactor_http.clone(), base, workspace, token)
+    }
+
+    pub async fn new_transactor_client_ws_from_token(
+        &self,
+        base: Url,
+        workspace: WorkspaceUuid,
+        token: impl Into<SecretString>,
+    ) -> Result<TransactorClient<WsBackend>> {
+        TransactorClient::new_ws(base, workspace, token).await
     }
 
     #[cfg(feature = "kafka")]

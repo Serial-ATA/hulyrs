@@ -23,6 +23,8 @@ use crate::{
 
 mod message;
 pub use message::*;
+use crate::services::transactor::backend::Backend;
+use crate::services::transactor::methods::Method;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -79,13 +81,13 @@ impl<T: serde::Serialize> Envelope<T> {
 }
 
 pub trait EventClient {
-    fn request_raw<T: Serialize, R: DeserializeOwned>(
-        &self,
+    fn request_raw<T: Serialize, R: DeserializeOwned + Send>(
+        &mut self,
         envelope: &Envelope<T>,
     ) -> impl Future<Output = Result<R>>;
 
-    fn request_for_result<T: Serialize, R: DeserializeOwned>(
-        &self,
+    fn request_for_result<T: Serialize, R: DeserializeOwned + Send>(
+        &mut self,
         r#type: MessageRequestType,
         request: T,
     ) -> impl Future<Output = Result<R>> {
@@ -93,7 +95,7 @@ pub trait EventClient {
     }
 
     fn request<T: Serialize>(
-        &self,
+        &mut self,
         r#type: MessageRequestType,
         request: T,
     ) -> impl Future<Output = Result<()>> {
@@ -105,22 +107,20 @@ pub trait EventClient {
     }
 }
 
-impl EventClient for super::TransactorClient {
-    async fn request_raw<T: Serialize, R: DeserializeOwned>(
-        &self,
+impl<B: Backend> EventClient for super::TransactorClient<B> {
+    async fn request_raw<T: Serialize, R: DeserializeOwned + Send>(
+        &mut self,
         envelope: &Envelope<T>,
     ) -> Result<R> {
-        let path = format!("/api/v1/event/{}", self.workspace);
-        let url = self.base.join(&path)?;
-
-        Ok(<HttpClient as JsonClient>::post(&self.http, self, url, envelope).await?)
+        self.post(Method::Event, envelope).await
     }
 }
 
 #[cfg(feature = "kafka")]
 pub mod kafka {
     use super::*;
-    use crate::{Config, services::types::WorkspaceUuid};
+    use crate::Config;
+    use crate::services::core::WorkspaceUuid;
     use rdkafka::{
         ClientConfig,
         message::{Header, OwnedHeaders},
