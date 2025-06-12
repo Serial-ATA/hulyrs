@@ -16,7 +16,13 @@
 use crate::services::core::Space;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(non_upper_case_globals)]
+pub mod class {
+    pub const Channel: &str = "chunter.class.Channel";
+    pub const DirectMessage: &str = "chunter.class.DirectMessage";
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ChunterSpace {
     #[serde(flatten)]
@@ -25,7 +31,7 @@ pub struct ChunterSpace {
     pub messages: Option<u32>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
     #[serde(flatten)]

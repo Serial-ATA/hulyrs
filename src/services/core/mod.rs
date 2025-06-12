@@ -18,6 +18,17 @@ use crate::services::types::AccountUuid;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(non_upper_case_globals)]
+pub mod space {
+    pub const Space: &str = "core.space.Space";
+    pub const Tx: &str = "core.space.Tx";
+}
+
+#[allow(non_upper_case_globals)]
+pub mod class {
+    pub const TxCreateDoc: &str = "core:class:TxCreateDoc";
+    pub const TxRemoveDoc: &str = "core:class:TxRemoveDoc";
+}
 #[serde(rename_all = "camelCase")]
 pub struct Space {
     #[serde(flatten)]
