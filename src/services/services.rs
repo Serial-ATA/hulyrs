@@ -29,17 +29,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{self as json, Value};
 use tracing::*;
 
-use super::{
-    account::AccountClient,
-    jwt::Claims,
-    kvs::KvsClient,
-    transactor::TransactorClient,
-    types::{AccountUuid, WorkspaceUuid},
-};
-use crate::{Error, Result, config::Config};
-
+use super::{account::AccountClient, jwt::Claims, kvs::KvsClient, transactor::TransactorClient};
+use crate::services::core::{AccountUuid, WorkspaceUuid};
 #[cfg(feature = "kafka")]
 use crate::services::transactor::event::kafka::KafkaEventPublisher;
+use crate::{Error, Result, config::Config};
+use crate::services::transactor::backend::http::HttpBackend;
+use crate::services::transactor::backend::ws::WsBackend;
 
 pub trait RequestBuilderExt {
     fn send_ext(self) -> impl Future<Output = Result<Response>>;

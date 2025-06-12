@@ -18,10 +18,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json as json;
 
+use crate::services::core::{PersonId, Timestamp};
 use derive_builder::Builder;
-
-use crate::services::types::{PersonId, Timestamp};
-
 type Date = chrono::DateTime<chrono::Utc>;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
