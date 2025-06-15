@@ -7,6 +7,7 @@ use url::Url;
 pub mod http;
 pub mod ws;
 
+#[allow(async_fn_in_trait)]
 pub trait Backend {
     async fn get<T: DeserializeOwned + Send>(
         &mut self,

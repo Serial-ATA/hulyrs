@@ -18,10 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::services::core::{PersonId, PersonUuid};
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::methods::Method;
-use crate::{
-    Result,
-    services::{HttpClient, JsonClient, core::SocialIdType},
-};
+use crate::{Result, services::core::SocialIdType};
 
 #[derive(Serialize, Debug, derive_builder::Builder)]
 #[serde(rename_all = "camelCase")]

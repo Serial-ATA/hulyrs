@@ -16,10 +16,7 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json as json;
 
-use crate::{
-    Result,
-    services::{HttpClient, JsonClient},
-};
+use crate::Result;
 
 mod message;
 use crate::services::transactor::backend::Backend;

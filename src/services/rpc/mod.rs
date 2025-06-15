@@ -1,6 +1,6 @@
 use crate::services::Status;
 use crate::services::core::Account;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 #[serde(untagged, rename_all = "camelCase")]

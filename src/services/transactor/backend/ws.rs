@@ -5,7 +5,7 @@ use crate::{Error, Result};
 use bytes::Bytes;
 use futures::channel::oneshot;
 use futures::stream::{SplitSink, SplitStream};
-use futures::{SinkExt, StreamExt, TryStreamExt};
+use futures::{SinkExt, StreamExt};
 use reqwest::Client;
 use reqwest_websocket::{Message, RequestBuilderExt, WebSocket};
 use serde::Serialize;
@@ -92,7 +92,7 @@ async fn socket_task(
                         payload = resp.into();
                     },
                     Message::Binary(resp) => {
-                        if &resp == PONG.as_bytes() {
+                        if resp == PONG.as_bytes() {
                             response = Response {
                                 result: Some(Value::String(PONG.to_string())),
                                 ..Default::default()
@@ -259,7 +259,7 @@ impl Backend for WsBackend {
         method: Method,
         body: &Q,
     ) -> Result<T> {
-        let Value::Object(body_json) = serde_json::to_value(&body)? else {
+        let Value::Object(body_json) = serde_json::to_value(body)? else {
             return Err(Error::Other("Expected a JSON object"));
         };
 
@@ -270,7 +270,7 @@ impl Backend for WsBackend {
             time: None,
         };
 
-        send_and_wait(&mut self.cmd_tx, payload).await
+        send_and_wait(&self.cmd_tx, payload).await
     }
 
     fn base(&self) -> &Url {

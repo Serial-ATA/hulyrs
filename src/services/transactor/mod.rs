@@ -20,7 +20,6 @@ use crate::services::transactor::backend::Backend;
 use crate::services::transactor::backend::http::{HttpBackend, HttpClient};
 use crate::services::transactor::backend::ws::{WsBackend, WsBackendOpts};
 use crate::services::transactor::methods::Method;
-use reqwest_websocket::{Message, RequestBuilderExt, WebSocket};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -31,11 +30,6 @@ pub mod document;
 pub mod event;
 pub mod methods;
 pub mod person;
-
-pub struct TransactorRequest {
-    pub method: String,
-    pub params: Vec<(String, String)>,
-}
 
 #[derive(Clone)]
 pub struct TransactorClient<B> {
@@ -63,10 +57,10 @@ impl<B: Backend> TransactorClient<B> {
         self.backend.base()
     }
 
-    pub async fn get<T: DeserializeOwned + Send>(
+    pub async fn get<'a, T: DeserializeOwned + Send>(
         &mut self,
         method: Method,
-        params: impl IntoIterator<Item = (&str, &str)>,
+        params: impl IntoIterator<Item = (&'a str, &'a str)> + Send,
     ) -> Result<T> {
         self.backend.get(method, params).await
     }
