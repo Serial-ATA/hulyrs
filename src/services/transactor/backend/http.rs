@@ -1,10 +1,10 @@
 use crate::Result;
-use crate::services::{JsonClient, TokenProvider};
 use crate::services::transactor::methods::Method;
+use crate::services::{JsonClient, TokenProvider};
 use reqwest_middleware::ClientWithMiddleware;
 use secrecy::{ExposeSecret, SecretString};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use url::Url;
 
 pub type HttpClient = ClientWithMiddleware;
@@ -37,7 +37,11 @@ impl super::Backend for HttpBackend {
         <crate::services::HttpClient as JsonClient>::get(&self.client, &*self, url).await
     }
 
-    async fn post<T: DeserializeOwned + Send, Q: Serialize>(&mut self, method: Method, body: &Q) -> Result<T> {
+    async fn post<T: DeserializeOwned + Send, Q: Serialize>(
+        &mut self,
+        method: Method,
+        body: &Q,
+    ) -> Result<T> {
         let url = self.base.join(&format!("/api/v1/{}", method.kebab()))?;
         <crate::services::HttpClient as JsonClient>::post(&self.client, &*self, url, body).await
     }

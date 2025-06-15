@@ -26,4 +26,5 @@ api_methods!(
     Tx: "tx", "tx",
     Event: "event", "event",
     Ping: "ping", "ping",
+    Hello: "hello", "hello",
 );

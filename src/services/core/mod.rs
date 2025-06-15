@@ -15,6 +15,7 @@
 
 use crate::services::transactor::document::Doc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub type PersonUuid = Uuid;
@@ -109,4 +110,12 @@ pub struct Account {
     pub primary_social_id: PersonId,
     pub social_ids: Vec<PersonId>,
     pub full_social_ids: Vec<SocialId>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindResult<T> {
+    pub total: i64,
+    pub value: Vec<T>,
+    pub lookup_map: Option<HashMap<String, T>>,
 }

@@ -1,29 +1,36 @@
-use crate::services::rpc::{HelloResponse, ReqId, Response};
+use crate::services::rpc::{HelloRequest, HelloResponse, ReqId, Request, Response};
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::methods::Method;
 use crate::{Error, Result};
+use bytes::Bytes;
+use futures::channel::oneshot;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt, TryStreamExt};
-use futures::channel::{oneshot, mpsc};
 use reqwest::Client;
 use reqwest_websocket::{Message, RequestBuilderExt, WebSocket};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicI32, Ordering};
-use bytes::Bytes;
-use futures::channel::mpsc::UnboundedSender;
+use std::time::Duration;
+use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::JoinHandle;
-use tracing::{trace, warn};
-use url::Url;
 use tokio_with_wasm::alias as tokio;
+use tracing::{error, trace, warn};
+use url::Url;
+#[cfg(target_family = "wasm")]
+pub use wasmtimer::{std::Instant, tokio::sleep};
+#[cfg(not(target_family = "wasm"))]
+use {std::time::Instant, tokio::time::sleep};
+
+const PONG: &str = "pong!";
 
 enum Command {
     Call {
         payload: Value,
         reply_tx: oneshot::Sender<Result<Response<Value>>>,
-        id: ReqId,
     },
     Close,
 }
@@ -32,16 +39,34 @@ async fn socket_task(
     mut write: SplitSink<WebSocket, Message>,
     mut read: SplitStream<WebSocket>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
+    opts: WsBackendOpts,
 ) -> Result<()> {
     let mut pending = HashMap::<ReqId, oneshot::Sender<Result<Response<Value>>>>::new();
-    let mut binary_mode   = false;
-    let mut use_compression = false;
-    
+    let mut binary_mode = opts.binary;
+    let mut use_compression = opts.compression;
+    let next_id = AtomicI32::new(1);
+
+    let hello = HelloRequest {
+        request: Request {
+            id: Some(ReqId::Num(-1)),
+            method: Method::Hello.camel().to_string(),
+            params: Vec::new(),
+            time: None,
+        },
+        binary: Some(binary_mode),
+        compression: Some(use_compression),
+    };
+    trace!(target: "ws", ?hello, "sending HELLO");
+    write.send(encode_message(&hello, binary_mode)?).await?;
+
     loop {
         tokio::select! {
-            Some(cmd) = cmd_rx.next() => match cmd {
-                Command::Call { id, payload, reply_tx } => {
-                    pending.insert(id.clone(), reply_tx);
+            Some(cmd) = cmd_rx.recv() => match cmd {
+                Command::Call { mut payload, reply_tx } => {
+                    let id = next_id.fetch_add(1, Ordering::Relaxed);
+                    payload["id"] = Value::Number(id.into());
+
+                    pending.insert(id.into(), reply_tx);
                     write.send(encode_message(&payload, binary_mode)?).await?;
                 }
                 Command::Close => break,
@@ -54,44 +79,53 @@ async fn socket_task(
                 let payload: Bytes;
                 match message? {
                     Message::Text(resp) => {
-                        response = serde_json::from_str(&resp)?;
+                        // Ping responses don't follow the same structure
+                        if resp == PONG {
+                            response = Response {
+                                result: Some(Value::String(PONG.to_string())),
+                                ..Default::default()
+                            }
+                        } else {
+                            response = serde_json::from_str(&resp)?;
+                        }
+
                         payload = resp.into();
                     },
                     Message::Binary(resp) => {
-                        response = serde_json::from_slice(&resp)?;
+                        if &resp == PONG.as_bytes() {
+                            response = Response {
+                                result: Some(Value::String(PONG.to_string())),
+                                ..Default::default()
+                            }
+                        } else {
+                            response = serde_json::from_slice(&resp)?;
+                        }
+
                         payload = resp;
                     },
                     Message::Ping(payload) => {
                         trace!(target: "ws", ?payload, "Received ping, replying...");
-                        let payload = json!({
-                            "method": Method::Ping.camel(),
-                            "params": [],
-                        });
-
-                        write.send(encode_message(&payload, binary_mode)?).await?;
+                        write.send(encode_message(&Method::Ping.camel(), binary_mode)?).await?;
                         continue;
                     },
+                    Message::Close { .. } => break,
                     _ => continue,
                 }
-                
+
                 if response.result.as_ref().is_some_and(|v| v == "ping") {
                     trace!(target: "ws", ?payload, "Received ping, replying...");
-                    let payload = json!({
-                        "method": Method::Ping.camel(),
-                        "params": [],
-                    });
-
-                    write.send(encode_message(&payload, binary_mode)?).await?;
+                    write.send(encode_message(&Method::Ping.camel(), binary_mode)?).await?;
                     continue;
                 }
-                
+
                 if matches!(response.id, Some(ReqId::Num(-1))) {
                     let hello = serde_json::from_slice::<HelloResponse>(&payload)?;
                     binary_mode = hello.binary;
                     use_compression = hello.use_compression.unwrap_or(false);
                     continue;
                 }
-                
+
+                trace!(target: "ws", ?response, "Full response");
                 if let Some(id) = &response.id {
                     if let Some(tx) = pending.remove(id) {
                         let _ = tx.send(Ok(response)).ok();
@@ -101,32 +135,96 @@ async fn socket_task(
             }
         }
     }
-    
+
     Ok(())
 }
 
+async fn ping_task(cmd_tx: UnboundedSender<Command>) -> Result<()> {
+    const PING_TIMEOUT: Duration = Duration::from_secs(10);
+    const HANG_TIMEOUT: Duration = Duration::from_secs(60 * 5);
+
+    let mut last_ping_response = None;
+
+    loop {
+        sleep(PING_TIMEOUT).await;
+
+        let Some(ping_response_time) = last_ping_response.take() else {
+            trace!(target: "ws", "Pinging server");
+
+            let payload = Request {
+                id: None,
+                method: Method::Ping.camel().to_string(),
+                params: Vec::<()>::new(),
+                time: None,
+            };
+
+            let _response: Value = send_and_wait(&cmd_tx, payload).await?;
+            last_ping_response = Some(Instant::now());
+            continue;
+        };
+
+        if ping_response_time.elapsed() > HANG_TIMEOUT {
+            error!("No ping response from server, closing socket");
+        }
+
+        last_ping_response = None;
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct WsBackendOpts {
+    pub binary: bool,
+    pub compression: bool,
+}
+
 pub struct WsBackend {
-    cmd_tx: mpsc::UnboundedSender<Command>,
-    next_id: AtomicI32,
+    cmd_tx: UnboundedSender<Command>,
     base: Url,
     _handle: JoinHandle<()>,
 }
 
 impl WsBackend {
-    pub(in crate::services::transactor) async fn connect(base: Url, token: &str) -> Result<Self> {
+    pub(in crate::services::transactor) async fn connect(
+        base: Url,
+        token: &str,
+        opts: WsBackendOpts,
+    ) -> Result<Self> {
         let url = base.join(token)?;
-        let resp = Client::default().get(url).bearer_auth(token).upgrade().send().await?;
+        let resp = Client::default()
+            .get(url)
+            .bearer_auth(token)
+            .upgrade()
+            .send()
+            .await?;
         let ws = resp.into_websocket().await?;
 
         let (write, read) = ws.split();
-        let (cmd_tx, cmd_rx) = mpsc::unbounded::<Command>();
-        let handle = tokio::spawn(async move {
-            if let Err(e) = socket_task(write, read, cmd_rx).await {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
+        let socket_handle = async move {
+            if let Err(e) = socket_task(write, read, cmd_rx, opts).await {
                 warn!(target:"ws", ?e, "socket task crashed");
             }
+        };
+
+        let cmd_tx2 = cmd_tx.clone();
+        let ping_handle = async move {
+            if let Err(e) = ping_task(cmd_tx2).await {
+                warn!(target:"ws", ?e, "ping task ended");
+            }
+        };
+
+        let handle = tokio::task::spawn(async move {
+            tokio::select! {
+                _ = socket_handle => {},
+                _ = ping_handle => {},
+            }
         });
-        
-        Ok(Self { base, next_id: AtomicI32::new(1), cmd_tx, _handle: handle })
+
+        Ok(Self {
+            base,
+            cmd_tx,
+            _handle: handle,
+        })
     }
 }
 
@@ -144,27 +242,35 @@ impl Backend for WsBackend {
         method: Method,
         params: impl IntoIterator<Item = (&str, &str)>,
     ) -> Result<T> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed).into();
-        
         let param_values = params.into_iter().map(|(_k, v)| v).collect::<Vec<_>>();
-        
-        let payload = json!({
-            "method": method.camel(),
-            "params": param_values,
-        });
 
-        send_and_wait(&mut self.cmd_tx, id, payload).await
+        let payload = Request {
+            id: None,
+            method: method.camel().to_string(),
+            params: param_values,
+            time: None,
+        };
+
+        send_and_wait(&self.cmd_tx, payload).await
     }
 
-    async fn post<T: DeserializeOwned + Send, Q: Serialize>(&mut self, method: Method, body: &Q) -> Result<T> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed).into();
-        
-        let payload = json!({
-            "method": method.camel(),
-            "body": body,
-        });
+    async fn post<T: DeserializeOwned + Send, Q: Serialize>(
+        &mut self,
+        method: Method,
+        body: &Q,
+    ) -> Result<T> {
+        let Value::Object(body_json) = serde_json::to_value(&body)? else {
+            return Err(Error::Other("Expected a JSON object"));
+        };
 
-        send_and_wait(&mut self.cmd_tx, id, payload).await
+        let payload = Request {
+            id: None,
+            method: method.camel().to_string(),
+            params: body_json.values().collect(),
+            time: None,
+        };
+
+        send_and_wait(&mut self.cmd_tx, payload).await
     }
 
     fn base(&self) -> &Url {
@@ -172,20 +278,20 @@ impl Backend for WsBackend {
     }
 }
 
-async fn send_and_wait<T: DeserializeOwned + Send>(cmd_tx: &mut UnboundedSender<Command>, id: ReqId, payload: Value) -> Result<T> {
-    trace!(target: "ws", ?payload, "Sending message");
+async fn send_and_wait<T: DeserializeOwned + Send, U: Serialize + Debug>(
+    cmd_tx: &UnboundedSender<Command>,
+    payload: Request<U>,
+) -> Result<T> {
+    let payload = serde_json::to_value(&payload)?;
+    trace!(target: "ws", %payload, "Sending message");
 
     let (reply_tx, reply_rx) = oneshot::channel();
-    cmd_tx.send(Command::Call {
-        payload,
-        reply_tx,
-        id,
-    }).await.ok();
+    cmd_tx.send(Command::Call { payload, reply_tx }).ok();
 
     let Ok(reply) = reply_rx.await else {
         return Err(Error::Other("connection closed before reply"));
     };
-    
+
     let reply = reply?;
     let Some(result) = reply.result else {
         return Err(Error::Other("server didn't return a result"));

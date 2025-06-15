@@ -22,9 +22,9 @@ use crate::{
 };
 
 mod message;
-pub use message::*;
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::methods::Method;
+pub use message::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]

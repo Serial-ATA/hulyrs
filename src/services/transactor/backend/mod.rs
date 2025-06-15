@@ -1,7 +1,7 @@
 use crate::Result;
 use crate::services::transactor::methods::Method;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use url::Url;
 
 pub mod http;
@@ -19,6 +19,6 @@ pub trait Backend {
         method: Method,
         body: &Q,
     ) -> Result<T>;
-    
+
     fn base(&self) -> &Url;
 }

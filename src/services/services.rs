@@ -20,10 +20,6 @@ use reqwest::{self, Response, Url};
 use reqwest::{StatusCode, header::HeaderValue};
 use reqwest_middleware::ClientBuilder;
 use reqwest_middleware::{ClientWithMiddleware as HttpClient, RequestBuilder};
-use reqwest_retry::{
-    RetryTransientMiddleware, Retryable, RetryableStrategy, default_on_request_failure,
-    policies::ExponentialBackoff,
-};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{self as json, Value};
@@ -31,11 +27,18 @@ use tracing::*;
 
 use super::{account::AccountClient, jwt::Claims, kvs::KvsClient, transactor::TransactorClient};
 use crate::services::core::{AccountUuid, WorkspaceUuid};
+use crate::services::transactor::backend::http::HttpBackend;
+use crate::services::transactor::backend::ws::{WsBackend, WsBackendOpts};
+use crate::{Error, Result, config::Config};
+
 #[cfg(feature = "kafka")]
 use crate::services::transactor::event::kafka::KafkaEventPublisher;
-use crate::{Error, Result, config::Config};
-use crate::services::transactor::backend::http::HttpBackend;
-use crate::services::transactor::backend::ws::WsBackend;
+
+#[cfg(feature = "reqwest_middleware")]
+use reqwest_retry::{
+    RetryTransientMiddleware, Retryable, RetryableStrategy, default_on_request_failure,
+    policies::ExponentialBackoff,
+};
 
 pub trait RequestBuilderExt {
     fn send_ext(self) -> impl Future<Output = Result<Response>>;
@@ -81,7 +84,7 @@ impl ForceScheme for Url {
                 self.set_scheme("wss").unwrap();
             }
 
-            "ws" | "wss" => {},
+            "ws" | "wss" => {}
 
             _ => panic!(),
         };
@@ -449,7 +452,11 @@ impl ServiceFactory {
         )
     }
 
-    pub fn new_transactor_client(&self, base: Url, claims: &Claims) -> Result<TransactorClient<HttpBackend>> {
+    pub fn new_transactor_client(
+        &self,
+        base: Url,
+        claims: &Claims,
+    ) -> Result<TransactorClient<HttpBackend>> {
         TransactorClient::new(
             self.transactor_http.clone(),
             base,
@@ -467,6 +474,7 @@ impl ServiceFactory {
         &self,
         base: Url,
         claims: &Claims,
+        opts: WsBackendOpts,
     ) -> Result<TransactorClient<WsBackend>> {
         TransactorClient::new_ws(
             base,
@@ -477,6 +485,7 @@ impl ServiceFactory {
                     .as_ref()
                     .ok_or(Error::Other("NoSecret"))?,
             )?,
+            opts,
         )
         .await
     }
@@ -495,8 +504,9 @@ impl ServiceFactory {
         base: Url,
         workspace: WorkspaceUuid,
         token: impl Into<SecretString>,
+        opts: WsBackendOpts,
     ) -> Result<TransactorClient<WsBackend>> {
-        TransactorClient::new_ws(base, workspace, token).await
+        TransactorClient::new_ws(base, workspace, token, opts).await
     }
 
     #[cfg(feature = "kafka")]

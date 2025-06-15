@@ -18,9 +18,9 @@ pub mod chunter;
 pub mod core;
 pub mod jwt;
 pub mod kvs;
+mod rpc;
 pub mod services;
 pub mod transactor;
-mod rpc;
 
 pub use services::*;
 

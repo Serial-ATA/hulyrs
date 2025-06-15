@@ -18,12 +18,12 @@ use crate::services::ForceScheme;
 use crate::services::core::WorkspaceUuid;
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::backend::http::{HttpBackend, HttpClient};
-use crate::services::transactor::backend::ws::WsBackend;
+use crate::services::transactor::backend::ws::{WsBackend, WsBackendOpts};
 use crate::services::transactor::methods::Method;
 use reqwest_websocket::{Message, RequestBuilderExt, WebSocket};
 use secrecy::{ExposeSecret, SecretString};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use url::Url;
 
 pub mod backend;
@@ -92,7 +92,11 @@ impl TransactorClient<HttpBackend> {
         Ok(Self {
             workspace,
             token: token.clone(),
-            backend: HttpBackend { base, client: http, token },
+            backend: HttpBackend {
+                base,
+                client: http,
+                token,
+            },
         })
     }
 }
@@ -102,10 +106,11 @@ impl TransactorClient<WsBackend> {
         base: Url,
         workspace: WorkspaceUuid,
         token: impl Into<SecretString>,
+        opts: WsBackendOpts,
     ) -> Result<Self> {
         let base = base.force_ws_scheme();
         let token = token.into();
-        let backend = WsBackend::connect(base, token.expose_secret()).await?;
+        let backend = WsBackend::connect(base, token.expose_secret(), opts).await?;
 
         Ok(Self {
             workspace,

@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
-use crate::services::core::Account;
 use crate::services::Status;
+use crate::services::core::Account;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-#[serde(rename_all = "camelCase")]
+#[serde(untagged, rename_all = "camelCase")]
 pub enum ReqId {
     Str(String),
     Num(i32),
@@ -27,7 +27,7 @@ pub struct RateLimitInfo {
     pub remaining: u32,
     pub limit: u32,
     pub current: u32,
-    pub reset: u32,
+    pub reset: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u32>,
 }
@@ -39,7 +39,7 @@ pub struct Chunk {
     pub r#final: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Response<R> {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,11 +55,33 @@ pub struct Response<R> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk: Option<Chunk>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub time: Option<u32>,
+    pub time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bfst: Option<u32>,
+    pub bfst: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub queue: Option<u32>
+    pub queue: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Request<P> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<ReqId>,
+    pub method: String,
+    pub params: Vec<P>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct HelloRequest {
+    #[serde(flatten)]
+    pub request: Request<()>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compression: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -77,5 +99,5 @@ pub struct HelloResponse {
     pub last_hash: Option<String>,
     pub account: Account,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub use_compression: Option<bool>
+    pub use_compression: Option<bool>,
 }

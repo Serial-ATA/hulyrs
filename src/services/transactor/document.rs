@@ -21,13 +21,10 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::atomic::AtomicUsize;
 
-use crate::services::core::{Account, PersonId, Ref, Timestamp};
+use crate::services::core::{Account, FindResult, PersonId, Ref, Timestamp};
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::methods::Method;
-use crate::{
-    Error, Result,
-    services::{HttpClient, JsonClient},
-};
+use crate::{Error, Result, services::JsonClient};
 
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 static RANDOM: LazyLock<String> = LazyLock::new(|| {
@@ -271,14 +268,6 @@ impl FindOptionsBuilder {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FindResult<T> {
-    pub data_type: String,
-    pub total: i64,
-    pub value: Vec<T>,
-}
-
 pub trait DocumentClient {
     fn get_account(&mut self) -> impl Future<Output = Result<Account>>;
 
@@ -303,12 +292,7 @@ pub trait DocumentClient {
 
 impl<B: Backend> DocumentClient for super::TransactorClient<B> {
     async fn get_account(&mut self) -> Result<Account> {
-        self
-            .get(
-                Method::Account,
-                [],
-            )
-            .await
+        self.get(Method::Account, []).await
     }
 
     async fn find_all<Q: Serialize, T: DeserializeOwned>(
@@ -324,7 +308,7 @@ impl<B: Backend> DocumentClient for super::TransactorClient<B> {
         }
 
         let query = query.as_object().unwrap();
-        
+
         let mut result: FindResult<Value> = self
             .get(
                 Method::FindAll,
@@ -369,7 +353,6 @@ impl<B: Backend> DocumentClient for super::TransactorClient<B> {
         }
 
         let result = FindResult {
-            data_type: result.data_type,
             total: result.total,
             value: {
                 let mut value = Vec::new();
@@ -379,6 +362,20 @@ impl<B: Backend> DocumentClient for super::TransactorClient<B> {
                 }
 
                 value
+            },
+            lookup_map: match result.lookup_map {
+                Some(lookup_map) => {
+                    let new_map = lookup_map
+                        .into_iter()
+                        .map(|(k, v)| match json::from_value(v) {
+                            Ok(val) => Ok((k, val)),
+                            Err(e) => Err(e.into()),
+                        })
+                        .collect::<Result<_>>()?;
+
+                    Some(new_map)
+                }
+                None => None,
             },
         };
 
