@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 #[allow(non_upper_case_globals)]
 pub mod class {
-    pub const Channel: &str = "chunter.class.Channel";
-    pub const DirectMessage: &str = "chunter.class.DirectMessage";
+    pub const Channel: &str = "chunter:class:Channel";
+    pub const DirectMessage: &str = "chunter:class:DirectMessage";
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
