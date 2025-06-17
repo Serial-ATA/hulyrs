@@ -200,7 +200,7 @@ pub enum Severity {
 pub struct Status {
     pub severity: Severity,
     pub code: String,
-    pub params: HashMap<String, String>,
+    pub params: HashMap<String, Value>,
 }
 
 impl std::fmt::Display for Status {
