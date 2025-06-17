@@ -269,34 +269,34 @@ impl FindOptionsBuilder {
 }
 
 pub trait DocumentClient {
-    fn get_account(&mut self) -> impl Future<Output = Result<Account>>;
+    fn get_account(&self) -> impl Future<Output = Result<Account>>;
 
     fn find_all<Q: Serialize, T: DeserializeOwned>(
-        &mut self,
+        &self,
         class: &str,
         query: Q,
         options: &FindOptions,
     ) -> impl Future<Output = Result<FindResult<T>>>;
 
     fn find_one<Q: Serialize, T: DeserializeOwned>(
-        &mut self,
+        &self,
         class: &str,
         query: Q,
         options: &FindOptions,
     ) -> impl Future<Output = Result<Option<T>>>;
 
-    fn tx<R: DeserializeOwned + Send, T>(&mut self, tx: T) -> impl Future<Output = Result<R>>
+    fn tx<R: DeserializeOwned + Send, T>(&self, tx: T) -> impl Future<Output = Result<R>>
     where
         T: Transaction;
 }
 
 impl<B: Backend> DocumentClient for super::TransactorClient<B> {
-    async fn get_account(&mut self) -> Result<Account> {
+    async fn get_account(&self) -> Result<Account> {
         self.get(Method::Account, []).await
     }
 
     async fn find_all<Q: Serialize, T: DeserializeOwned>(
-        &mut self,
+        &self,
         class: &str,
         query: Q,
         options: &FindOptions,
@@ -313,9 +313,9 @@ impl<B: Backend> DocumentClient for super::TransactorClient<B> {
             .get(
                 Method::FindAll,
                 [
-                    ("class", class),
-                    ("query", &json::to_string(&query)?),
-                    ("options", &json::to_string(&options)?),
+                    ("class", class.into()),
+                    ("query", json::to_value(&query)?),
+                    ("options", json::to_value(&options)?),
                 ],
             )
             .await?;
@@ -383,7 +383,7 @@ impl<B: Backend> DocumentClient for super::TransactorClient<B> {
     }
 
     async fn find_one<Q: Serialize, T: DeserializeOwned>(
-        &mut self,
+        &self,
         class: &str,
         query: Q,
         options: &FindOptions,
@@ -403,7 +403,7 @@ impl<B: Backend> DocumentClient for super::TransactorClient<B> {
             .next())
     }
 
-    async fn tx<R: DeserializeOwned + Send, T>(&mut self, tx: T) -> Result<R>
+    async fn tx<R: DeserializeOwned + Send, T>(&self, tx: T) -> Result<R>
     where
         T: Transaction,
     {

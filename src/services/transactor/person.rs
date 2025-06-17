@@ -42,16 +42,13 @@ pub struct EnsurePersonResponse {
 
 pub trait EnsurePerson {
     fn ensure_person(
-        &mut self,
+        &self,
         request: &EnsurePersonRequest,
     ) -> impl Future<Output = Result<EnsurePersonResponse>>;
 }
 
 impl<B: Backend> EnsurePerson for super::TransactorClient<B> {
-    async fn ensure_person(
-        &mut self,
-        request: &EnsurePersonRequest,
-    ) -> Result<EnsurePersonResponse> {
+    async fn ensure_person(&self, request: &EnsurePersonRequest) -> Result<EnsurePersonResponse> {
         self.post(Method::EnsurePerson, request).await
     }
 }

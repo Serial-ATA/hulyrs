@@ -23,6 +23,7 @@ use crate::services::transactor::methods::Method;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use url::Url;
 
 pub mod backend;
@@ -58,15 +59,15 @@ impl<B: Backend> TransactorClient<B> {
     }
 
     pub async fn get<'a, T: DeserializeOwned + Send>(
-        &mut self,
+        &self,
         method: Method,
-        params: impl IntoIterator<Item = (&'a str, &'a str)> + Send,
+        params: impl IntoIterator<Item = (&'a str, Value)> + Send,
     ) -> Result<T> {
         self.backend.get(method, params).await
     }
 
     pub async fn post<T: DeserializeOwned + Send, Q: Serialize>(
-        &mut self,
+        &self,
         method: Method,
         body: &Q,
     ) -> Result<T> {

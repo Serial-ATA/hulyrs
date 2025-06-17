@@ -79,12 +79,12 @@ impl<T: serde::Serialize> Envelope<T> {
 
 pub trait EventClient {
     fn request_raw<T: Serialize, R: DeserializeOwned + Send>(
-        &mut self,
+        &self,
         envelope: &Envelope<T>,
     ) -> impl Future<Output = Result<R>>;
 
     fn request_for_result<T: Serialize, R: DeserializeOwned + Send>(
-        &mut self,
+        &self,
         r#type: MessageRequestType,
         request: T,
     ) -> impl Future<Output = Result<R>> {
@@ -92,7 +92,7 @@ pub trait EventClient {
     }
 
     fn request<T: Serialize>(
-        &mut self,
+        &self,
         r#type: MessageRequestType,
         request: T,
     ) -> impl Future<Output = Result<()>> {
@@ -106,7 +106,7 @@ pub trait EventClient {
 
 impl<B: Backend> EventClient for super::TransactorClient<B> {
     async fn request_raw<T: Serialize, R: DeserializeOwned + Send>(
-        &mut self,
+        &self,
         envelope: &Envelope<T>,
     ) -> Result<R> {
         self.post(Method::Event, envelope).await

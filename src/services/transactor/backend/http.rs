@@ -5,6 +5,7 @@ use reqwest_middleware::ClientWithMiddleware;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use url::Url;
 
 pub type HttpClient = ClientWithMiddleware;
@@ -23,14 +24,14 @@ impl TokenProvider for &'_ HttpBackend {
 
 impl super::Backend for HttpBackend {
     async fn get<T: DeserializeOwned + Send>(
-        &mut self,
+        &self,
         method: Method,
-        params: impl IntoIterator<Item = (&str, &str)>,
+        params: impl IntoIterator<Item = (&str, Value)>,
     ) -> Result<T> {
         let mut url = self.base.join(&format!("/api/v1/{}", method.kebab()))?;
         let mut qp = url.query_pairs_mut();
         for (name, value) in params {
-            qp.append_pair(name, value);
+            qp.append_pair(name, &value.to_string());
         }
         drop(qp);
 
@@ -38,7 +39,7 @@ impl super::Backend for HttpBackend {
     }
 
     async fn post<T: DeserializeOwned + Send, Q: Serialize>(
-        &mut self,
+        &self,
         method: Method,
         body: &Q,
     ) -> Result<T> {

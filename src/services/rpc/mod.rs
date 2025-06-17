@@ -1,3 +1,5 @@
+pub mod util;
+
 use crate::services::Status;
 use crate::services::core::Account;
 use serde::{Deserialize, Serialize};

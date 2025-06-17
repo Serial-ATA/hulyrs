@@ -1,9 +1,10 @@
+use crate::services::Status;
+use crate::services::rpc::util::OkResponse;
 use crate::services::rpc::{HelloRequest, HelloResponse, ReqId, Request, Response};
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::methods::Method;
 use crate::{Error, Result};
 use bytes::Bytes;
-use futures::channel::oneshot;
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use reqwest::Client;
@@ -16,21 +17,22 @@ use std::fmt::Debug;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio_with_wasm::alias as tokio;
 use tracing::{error, trace, warn};
 use url::Url;
 #[cfg(target_family = "wasm")]
-pub use wasmtimer::{std::Instant, tokio::sleep};
+pub use wasmtimer::{std::Instant, tokio::sleep, tokio::timeout};
 #[cfg(not(target_family = "wasm"))]
-use {std::time::Instant, tokio::time::sleep};
+use {std::time::Instant, tokio::time::sleep, tokio::time::timeout};
 
 const PONG: &str = "pong!";
 
 enum Command {
     Call {
         payload: Value,
-        reply_tx: oneshot::Sender<Result<Response<Value>>>,
+        reply_tx: oneshot::Sender<std::result::Result<OkResponse<Value>, Status>>,
     },
     Close,
 }
@@ -40,8 +42,10 @@ async fn socket_task(
     mut read: SplitStream<WebSocket>,
     mut cmd_rx: mpsc::UnboundedReceiver<Command>,
     opts: WsBackendOpts,
+    hello_tx: oneshot::Sender<Result<()>>,
 ) -> Result<()> {
-    let mut pending = HashMap::<ReqId, oneshot::Sender<Result<Response<Value>>>>::new();
+    let mut pending =
+        HashMap::<ReqId, oneshot::Sender<std::result::Result<OkResponse<Value>, Status>>>::new();
     let mut binary_mode = opts.binary;
     let mut use_compression = opts.compression;
     let next_id = AtomicI32::new(1);
@@ -59,6 +63,7 @@ async fn socket_task(
     trace!(target: "ws", ?hello, "sending HELLO");
     write.send(encode_message(&hello, binary_mode)?).await?;
 
+    let mut hello_tx = Some(hello_tx);
     loop {
         tokio::select! {
             Some(cmd) = cmd_rx.recv() => match cmd {
@@ -119,16 +124,22 @@ async fn socket_task(
                 }
 
                 if matches!(response.id, Some(ReqId::Num(-1))) {
+                    // Just ignore any extra HELLOs
+                    let Some(hello_tx) = hello_tx.take() else {
+                        continue;
+                    };
+
                     let hello = serde_json::from_slice::<HelloResponse>(&payload)?;
                     binary_mode = hello.binary;
                     use_compression = hello.use_compression.unwrap_or(false);
+                    let _ = hello_tx.send(Ok(()));
                     continue;
                 }
 
                 trace!(target: "ws", ?response, "Full response");
                 if let Some(id) = &response.id {
                     if let Some(tx) = pending.remove(id) {
-                        let _ = tx.send(Ok(response)).ok();
+                        let _ = tx.send(response.into_result()).ok();
                         continue;
                     }
                 }
@@ -171,10 +182,22 @@ async fn ping_task(cmd_tx: UnboundedSender<Command>) -> Result<()> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct WsBackendOpts {
     pub binary: bool,
     pub compression: bool,
+    /// How long to wait for the server's HELLO response before timing out
+    pub hello_timeout: Duration,
+}
+
+impl Default for WsBackendOpts {
+    fn default() -> Self {
+        Self {
+            binary: false,
+            compression: false,
+            hello_timeout: Duration::from_secs(10),
+        }
+    }
 }
 
 pub struct WsBackend {
@@ -199,9 +222,11 @@ impl WsBackend {
         let ws = resp.into_websocket().await?;
 
         let (write, read) = ws.split();
+        let (hello_tx, hello_rx) = oneshot::channel();
+
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<Command>();
         let socket_handle = async move {
-            if let Err(e) = socket_task(write, read, cmd_rx, opts).await {
+            if let Err(e) = socket_task(write, read, cmd_rx, opts, hello_tx).await {
                 warn!(target:"ws", ?e, "socket task crashed");
             }
         };
@@ -219,6 +244,13 @@ impl WsBackend {
                 _ = ping_handle => {},
             }
         });
+
+        match timeout(opts.hello_timeout, hello_rx).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => return Err(e),
+            Err(_) => return Err(Error::Other("timed out waiting for HELLO")),
+            _ => return Err(Error::Other("HELLO channel closed unexpectedly")),
+        }
 
         Ok(Self {
             base,
@@ -238,9 +270,9 @@ fn encode_message<Q: Serialize>(value: &Q, binary_mode: bool) -> Result<Message>
 
 impl Backend for WsBackend {
     async fn get<T: DeserializeOwned + Send>(
-        &mut self,
+        &self,
         method: Method,
-        params: impl IntoIterator<Item = (&str, &str)>,
+        params: impl IntoIterator<Item = (&str, Value)>,
     ) -> Result<T> {
         let param_values = params.into_iter().map(|(_k, v)| v).collect::<Vec<_>>();
 
@@ -255,7 +287,7 @@ impl Backend for WsBackend {
     }
 
     async fn post<T: DeserializeOwned + Send, Q: Serialize>(
-        &mut self,
+        &self,
         method: Method,
         body: &Q,
     ) -> Result<T> {
