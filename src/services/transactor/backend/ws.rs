@@ -124,15 +124,25 @@ async fn socket_task(
                 }
 
                 if matches!(response.id, Some(ReqId::Num(-1))) {
-                    // Just ignore any extra HELLOs
-                    let Some(hello_tx) = hello_tx.take() else {
+                    if response.result.is_none() && response.error.is_some() {
+                        let result = response.into_result();
+                        error!(target: "ws", ?result);
                         continue;
-                    };
+                    }
+                    
+                    if response.result.is_some_and(|result| result == "hello") {
+                        // Just ignore any extra HELLOs
+                        let Some(hello_tx) = hello_tx.take() else {
+                            continue;
+                        };
 
-                    let hello = serde_json::from_slice::<HelloResponse>(&payload)?;
-                    binary_mode = hello.binary;
-                    use_compression = hello.use_compression.unwrap_or(false);
-                    let _ = hello_tx.send(Ok(()));
+                        let hello = serde_json::from_slice::<HelloResponse>(&payload)?;
+                        binary_mode = hello.binary;
+                        use_compression = hello.use_compression.unwrap_or(false);
+                        let _ = hello_tx.send(Ok(()));
+                        continue;
+                    }
+                    
                     continue;
                 }
 
