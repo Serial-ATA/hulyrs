@@ -19,11 +19,13 @@ use crate::services::core::WorkspaceUuid;
 use crate::services::transactor::backend::Backend;
 use crate::services::transactor::backend::http::{HttpBackend, HttpClient};
 use crate::services::transactor::backend::ws::{WsBackend, WsBackendOpts};
+use crate::services::transactor::document::FindOptions;
 use crate::services::transactor::methods::Method;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use subscription::SubscribedQuery;
 use url::Url;
 
 pub mod backend;
@@ -31,25 +33,30 @@ pub mod document;
 pub mod event;
 pub mod methods;
 pub mod person;
+mod subscription;
 
-#[derive(Clone)]
-pub struct TransactorClient<B> {
+struct TransactorClientInner<B> {
     pub workspace: WorkspaceUuid,
     token: SecretString,
     backend: B,
 }
 
+#[derive(Clone)]
+pub struct TransactorClient<B> {
+    backend: B,
+}
+
 impl<B: Backend> PartialEq for TransactorClient<B> {
     fn eq(&self, other: &Self) -> bool {
-        self.workspace == other.workspace
-            && self.token.expose_secret() == other.token.expose_secret()
+        self.backend.workspace() == other.backend.workspace()
+            && self.backend.provide_token() == other.backend.provide_token()
             && self.base() == other.base()
     }
 }
 
-impl<B> super::TokenProvider for &TransactorClient<B> {
+impl<B: Backend> super::TokenProvider for &TransactorClient<B> {
     fn provide_token(&self) -> Option<&str> {
-        Some(self.token.expose_secret())
+        self.backend.provide_token()
     }
 }
 
@@ -73,6 +80,10 @@ impl<B: Backend> TransactorClient<B> {
     ) -> Result<T> {
         self.backend.post(method, body).await
     }
+
+    pub(in crate::services::transactor) fn backend(&self) -> &B {
+        &self.backend
+    }
 }
 
 impl TransactorClient<HttpBackend> {
@@ -83,15 +94,8 @@ impl TransactorClient<HttpBackend> {
         token: impl Into<SecretString>,
     ) -> Result<Self> {
         let base = base.force_http_scheme();
-        let token = token.into();
         Ok(Self {
-            workspace,
-            token: token.clone(),
-            backend: HttpBackend {
-                base,
-                client: http,
-                token,
-            },
+            backend: HttpBackend::new(http, base, workspace, token),
         })
     }
 }
@@ -105,12 +109,17 @@ impl TransactorClient<WsBackend> {
     ) -> Result<Self> {
         let base = base.force_ws_scheme();
         let token = token.into();
-        let backend = WsBackend::connect(base, token.expose_secret(), opts).await?;
+        let backend = WsBackend::connect(base, workspace, token.expose_secret(), opts).await?;
 
-        Ok(Self {
-            workspace,
-            token,
-            backend,
-        })
+        Ok(Self { backend })
+    }
+
+    pub async fn subscribe<Q: Serialize + Clone, T: DeserializeOwned>(
+        &self,
+        class: impl AsRef<str>,
+        query: Q,
+        options: FindOptions,
+    ) -> SubscribedQuery<Q, T> {
+        SubscribedQuery::new(self.clone(), class.as_ref(), query, options)
     }
 }

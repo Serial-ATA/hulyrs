@@ -133,13 +133,13 @@ fn from_value<T: DeserializeOwned>(value: Value) -> Result<T> {
 pub trait JsonClient {
     fn get<U: TokenProvider, R: DeserializeOwned>(
         &self,
-        user: U,
+        user: &U,
         url: Url,
     ) -> impl Future<Output = Result<R>>;
 
     fn post<U: TokenProvider, Q: Serialize, R: DeserializeOwned>(
         &self,
-        user: U,
+        user: &U,
         url: Url,
         body: &Q,
     ) -> impl Future<Output = Result<R>>;
@@ -151,7 +151,7 @@ impl JsonClient for HttpClient {
         skip(self, user, url),
         fields(%url, method = "get", type = "json")
     )]
-    async fn get<U: TokenProvider, R: DeserializeOwned>(&self, user: U, url: Url) -> Result<R> {
+    async fn get<U: TokenProvider, R: DeserializeOwned>(&self, user: &U, url: Url) -> Result<R> {
         trace!("request");
 
         let mut request = self.get(url.clone());
@@ -165,7 +165,7 @@ impl JsonClient for HttpClient {
 
     async fn post<U: TokenProvider, Q: Serialize, R: DeserializeOwned>(
         &self,
-        user: U,
+        user: &U,
         url: Url,
         body: &Q,
     ) -> Result<R> {

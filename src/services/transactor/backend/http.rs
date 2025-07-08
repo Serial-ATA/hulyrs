@@ -1,4 +1,5 @@
 use crate::Result;
+use crate::services::core::WorkspaceUuid;
 use crate::services::transactor::methods::Method;
 use crate::services::{JsonClient, TokenProvider};
 use reqwest_middleware::ClientWithMiddleware;
@@ -6,19 +7,50 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use std::sync::Arc;
 use url::Url;
 
 pub type HttpClient = ClientWithMiddleware;
 
+struct HttpBackendInner {
+    workspace: WorkspaceUuid,
+    base: Url,
+    client: HttpClient,
+    token: SecretString,
+}
+
+#[derive(Clone)]
 pub struct HttpBackend {
-    pub(in crate::services::transactor) base: Url,
-    pub(in crate::services::transactor) client: HttpClient,
-    pub(in crate::services::transactor) token: SecretString,
+    inner: Arc<HttpBackendInner>,
+}
+
+impl HttpBackend {
+    pub fn new(
+        client: HttpClient,
+        base: Url,
+        workspace: WorkspaceUuid,
+        token: impl Into<SecretString>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(HttpBackendInner {
+                workspace,
+                base,
+                client,
+                token: token.into(),
+            }),
+        }
+    }
+}
+
+impl TokenProvider for HttpBackend {
+    fn provide_token(&self) -> Option<&str> {
+        Some(self.inner.token.expose_secret())
+    }
 }
 
 impl TokenProvider for &'_ HttpBackend {
     fn provide_token(&self) -> Option<&str> {
-        Some(self.token.expose_secret())
+        Some(self.inner.token.expose_secret())
     }
 }
 
@@ -28,14 +60,14 @@ impl super::Backend for HttpBackend {
         method: Method,
         params: impl IntoIterator<Item = (&str, Value)>,
     ) -> Result<T> {
-        let mut url = self.base.join(&format!("/api/v1/{}", method.kebab()))?;
+        let mut url = self.base().join(&format!("/api/v1/{}", method.kebab()))?;
         let mut qp = url.query_pairs_mut();
         for (name, value) in params {
             qp.append_pair(name, &value.to_string());
         }
         drop(qp);
 
-        <crate::services::HttpClient as JsonClient>::get(&self.client, &*self, url).await
+        <crate::services::HttpClient as JsonClient>::get(&self.inner.client, self, url).await
     }
 
     async fn post<T: DeserializeOwned + Send, Q: Serialize>(
@@ -43,11 +75,15 @@ impl super::Backend for HttpBackend {
         method: Method,
         body: &Q,
     ) -> Result<T> {
-        let url = self.base.join(&format!("/api/v1/{}", method.kebab()))?;
-        <crate::services::HttpClient as JsonClient>::post(&self.client, &*self, url, body).await
+        let url = self.base().join(&format!("/api/v1/{}", method.kebab()))?;
+        <crate::services::HttpClient as JsonClient>::post(&self.inner.client, self, url, body).await
     }
 
     fn base(&self) -> &Url {
-        &self.base
+        &self.inner.base
+    }
+
+    fn workspace(&self) -> WorkspaceUuid {
+        self.inner.workspace
     }
 }
